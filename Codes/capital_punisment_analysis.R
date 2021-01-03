@@ -84,7 +84,7 @@ stats_to_summarize <- c("Mean", "Median", "Std", "IQR", "Min", "Max", "numObs" )
 df_summary <- select(df_merged, all_of(var_to_summarize))
 
 summary_table <- tibble(`Income Per Capita` = rep(0, 7), `Unemployment` = rep(0, 7), Poverty = rep(0,7),
-                        `Population Living in Urban Areas` = rep(0, 7), `Violent Crime` = rep(0, 7), 
+                        `Urbanization` = rep(0, 7), `Violent Crime` = rep(0, 7), 
                         Executions = rep(0, 7), `Violent Crime Per 10,000 People` = rep(0, 7),
                         `Executions Per 10,000 V. Crimes` = rep(0, 7))
 
@@ -108,13 +108,20 @@ for(i in 1:8){
 summary_table <- cbind(summary_table_var, summary_table)
 
 # Checking histograms for 2000
-
-df_merged %>% select(4, 5, 6, 7, 9, 10, 11, 12) %>%
+df_histogram <- df_merged
+df_histogram <- df_histogram %>% mutate(Poverty00 = Poverty00/10^6) %>%
+  mutate(`log(Poverty)` = log(Poverty00))
+names(df_histogram)[6:7] <- c("Unemployment", "People in Poverty (mm)")
+names(df_histogram)[10:12] <- c("Urbanization", "Violent Crimes per 10,000", "Executions per 10,000 V. Crime")
+names(df_histogram)[25] <- "log(People in Poverty)"
+df_histogram %>% select(6, 7, 10, 11, 12, 25) %>%
   gather() %>% 
   ggplot(aes(value)) +
-  geom_histogram( fill = "navy blue", bins = 25) +
+  geom_histogram( fill = "dodgerblue4", bins = 25) +
   facet_wrap(~key, scales = "free") +
-  scale_x_continuous(labels = comma)
+  theme_bw() +
+  scale_x_continuous(labels = comma) +
+  labs(x = "Value", y = "Count")
 
 # It seems that Violent Crime shows a skewed distribution. Violent Crime per capita might be a better representation
 # of our data seens it is more intuitive and also its distribution seems better.
@@ -238,7 +245,7 @@ ggplot( df_merged , aes(y = vcrime_per_capita00, x = Poverty99)) +
   geom_smooth(method="loess")+
   labs(x = "Poverty `99",y = "Violent Crime Per 10,000 People `00") 
 
-# 1) Violent Crime Per 10,000 People - log of People living in Poverty
+# 3) Violent Crime Per 10,000 People - log of People living in Poverty
 ggplot( df_merged , aes(y = vcrime_per_capita00, x = log(Poverty00))) +
   geom_point() +
   geom_smooth(method="loess")+
@@ -258,7 +265,7 @@ ggplot( df_merged , aes(y = vcrime_per_capita00, x = log(Poverty00))) +
 # 1) Violent Crime Per 10,000 People - People living in Urban Areas
 ggplot( df_merged , aes(y = vcrime_per_capita00, x = Urbanization00)) +
   geom_point() +
-  geom_smooth(method="loess")+
+  geom_smooth(method="loess", se = FALSE)+
   labs(x = "Urbanization `00",y = "Violent Crime Per 10,000 People `00") 
 
 
@@ -375,4 +382,19 @@ reg8 <- lm_robust( vcrime_per_capita00 ~ Unemployment00 + Poverty00_ln + Urbaniz
                    data = df_merged, se_type = "HC2")
 summary( reg8 )
 
+
+###
+# Ninth model:
+# We now check the same model with data from 1999.
+df_merged <- df_merged %>% mutate(Execution_dummy99 = ifelse(Executions99 >0, 1, 0))
+df_merged <- df_merged %>% mutate(Poverty99_ln = log(Poverty99)) 
+
+reg9 <- lm_robust( vcrime_per_capita99 ~ Unemployment99 + Poverty99_ln + Urbanization00 + 
+                     executions_per_vcrime99 + Execution_dummy99 + Poverty99_ln*Execution_dummy99,
+                   data = df_merged, se_type = "HC2")
+summary( reg9 )
+
+
+# The final version of the dataset should be written to the harddisk as well
+write_csv(df_merged, "/home/ozzy/Documents/CEU/ECBS-5208-Coding-1-Business-Analytics/Final Assignment/Data/Clean/short dataset.csv")
 

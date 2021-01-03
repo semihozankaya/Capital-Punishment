@@ -1,0 +1,290 @@
+---
+title: "Is Capital Punishment a Significant Deterrent?"
+author: "Ozan Kaya"
+date: "January 3, 2021"
+output:
+  pdf_document: default
+subtitle: Capital Punishment and Violent Crimes in the United States
+abstract: Even though the number of countries that still see capital punishment as
+  a significant deterrent against violent crime is diminishing everyday, it still
+  carries an important place in contemporary politics and law worldwide. This short
+  paper addresses the issue of this deterrence, the effect of capital punishment, leveraging
+  the United States' interstate criminal data along with macroeconomic and demographic
+  variables available.
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+options(scipen=999)
+library(tidyverse)
+library(moments)
+library(ggthemes)
+library(scales)
+library(estimatr)
+library(texreg)
+library(xtable)
+home <- "https://raw.githubusercontent.com/semihozankaya/DA-2_Final_Assignment/master/Data/Clean/dataset.csv"
+df <- read_csv(home, guess_max = 2075)
+```
+
+This paper tries to understand the pattern of association between capital punishment and violent crime rates in a given state while also accounting for different economic conditions in the United States. I believe that among many social, political and demographic variables, macroeconomics plays a major role in explaining criminal behaviour and the availability of capital punishment doesn't hold a significance in understanding the different levels of crime within the United States. 
+
+In order to test this hypothesis, I have put together statistics on violent crime, unemployment, income, people living in poverty, urbanization rates and executions from 50 states in various years from sources such as United States' Bureau of Justice, FBI and FRED. I will be conducting a cross-sectional analysis, focusing on the year 2000 also controlling for lagged effects from 1999. 
+
+
+## Data
+
+As stated above, I restrict my analysis with observations from 2000 and 1999. The data is publicly available and consists of interstate information on violent crimes and executions on a yearly basis from the Bureau of Justice and FBI for more than 50 years as well as state-level macroeconomic variables such as unemployment, income per capita, urbanization and poverty rates that are available to us mostly through US Census but they have been obtained from Federal Reserve Bank of St. Louis. 
+
+The data itself should be highly representative of urbanized, post-industrial societies such as the United States. With a population of over 300 million and variations between states, it is a sufficiently good dataset for our purposes. However, criminal behaviour is a vast topic and interrelations between variables and unobservable variables greatly limit our scope. Nevertheless, even at this level, the data could be argued to be representative of many societies, especially of the advanced economies. They could offer some insight into the relationship with economics, capital punishment and violent crimes.   
+
+The quality of the data, on the other hand, should be relatively good since it had been collected by government institutions for a very wide audience. Therefore I am not expecting any measurement errors, and after the collection and cleaning of the data, no missing values or extreme values were present. So I changed some of the variables' formats after loading the data into R, merged them so that we have a tidy dataset with one observation for each row. Finally, I changed some of the variable names for better representation and created some extra variables from the existing ones for further analysis. As stated before, the dataset was essentially a panel data, spanning for 50 years, and I have filtered it so that I can conduct a cross-sectional analysis on 50 states at year 2000.
+
+\pagebreak
+
+```{r}
+# Some make up
+names(df)[3] <- "state_name" 
+names(df)[9] <- "CPI" 
+names(df)[6] <- "Income_per_capita" 
+
+# Adding some simple transformations
+df <- df %>% mutate(vcrime_per_capita = violent_crime * 10000 / population, 
+                    executions_per_vcrime = Executions * 10000 / violent_crime)
+
+# I will chose 2000 with lagged effects from 1999. 
+
+df00 <- df %>% filter(year == 2000)
+df99 <- df %>% filter(year == 1999) %>% select(2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
+df_merged <- merge(df00, df99, by= "state_abbr", all.x = TRUE)
+df_merged <- df_merged %>% select(-year)
+df_merged <- df_merged %>% mutate(violent_crime_diff = violent_crime.x - violent_crime.y, 
+                                  Unemployment_diff = Unemployment.x - Unemployment.y, 
+                                  Income_diff = Income_per_capita.x - Income_per_capita.y)
+
+names(df_merged)[3:22] <- c("population00", "violent_crime00", "Income_per_capita00",
+                            "Unemployment00", "Poverty00", "CPI00", "Executions00", 
+                            "Urbanization00", "vcrime_per_capita00",
+                            "executions_per_vcrime00", "population99", "violent_crime99", 
+                            "Income_per_capita99", "Unemployment99", "Poverty99", "CPI99", 
+                            "Executions99", "Urbanization99", "vcrime_per_capita99",
+                            "executions_per_vcrime99")
+
+# The execution data is missing for DC, since it is not technically a state and urbanization data is only available # for 2000. 
+df_merged <- df_merged %>% filter(state_abbr != "DC")
+df_merged <- df_merged %>% select(-Urbanization99)
+
+```
+
+I want to have a model of violent crimes with explanatory variables like income per capita, unemployment, people living in poverty, urbanization rates, and states' executions. I later included violent crimes per 10,000 people and executions per 10,000 violent crimes to understand the relative frequency of violent crimes and the severity of the public in punishing these crimes.
+
+
+The following table shows selected summary statistics about the abovementioned variables\footnote{The columns 5 and 6 are showing violent crimes per 10,000 people and executions per 10,000 violent crime.}.
+
+```{r, results = "asis"}
+# Now check some summary statistics and prepare a table for it
+var_to_summarize <- c("Unemployment00", "Poverty00", "Urbanization00", 
+                     "vcrime_per_capita00", "executions_per_vcrime00")
+stats_to_summarize <- c("Mean", "Median", "Std", "IQR", "Min", "Max", "numObs" )
+
+df_summary <- select(df_merged, all_of(var_to_summarize))
+df_summary$Poverty00 <- df_summary$Poverty00/10^6
+
+summary_table <- tibble(`Unemployment` = rep(0, 7), `People in Poverty (mm)` = rep(0,7), `Urbanization` = rep(0, 7), `Violent Crimes*` = rep(0, 7), `Executions*` = rep(0, 7))
+
+
+for(i in 1:length(names(summary_table))){
+  summary_table[,i] <- df_summary %>%
+    summarise(mean  = mean(df_summary[[i]], na.rm = TRUE),
+            median   = median(df_summary[[i]], na.rm = TRUE),
+            std      = sd(df_summary[[i]], na.rm = TRUE),
+            iq_range = IQR(df_summary[[i]], na.rm = TRUE), 
+            min      = min(df_summary[[i]], na.rm = TRUE),
+            max      = max(df_summary[[i]], na.rm = TRUE),
+            numObs   = sum( !is.na( df_summary[[i]] ) ) ) %>% t()
+}
+summary_table_var <- tibble(Statistics = stats_to_summarize)
+
+for(i in 1:5){
+  summary_table[[i]] <- format(round(summary_table[[i]], 2), nsmall=2, big.mark=",")
+  }
+
+summary_table <- cbind(summary_table_var, summary_table)
+summary_xtable <- xtable(summary_table, caption = "Selected summary statistics for 2000")
+
+print(summary_xtable, comment=FALSE, include.rownames=FALSE)
+
+
+```
+
+During the analysis of the variables mentioned above, I noticed that data on people living in poverty shows a lot of variation and using logarithms for this variable might have reduced this variability and also; as a result, our model will have a higher chance of being linear as well as normality would be more plausible.
+
+Below, you may see histograms of the selected variables in the dataset. 
+
+```{r}
+# Checking histograms for 2000
+df_histogram <- df_merged
+df_histogram <- df_histogram %>% mutate(Poverty00 = Poverty00/10^6) %>%
+  mutate(`log(Poverty)` = log(Poverty00))
+names(df_histogram)[6:7] <- c("Unemployment", "People in Poverty (mm)")
+names(df_histogram)[10:12] <- c("Urbanization", "Violent Crimes per 10,000", "Executions per 10,000 V. Crime")
+names(df_histogram)[25] <- "log(People in Poverty)"
+df_histogram %>% select(6, 7, 10, 11, 12, 25) %>%
+  gather() %>% 
+  ggplot(aes(value)) +
+  geom_histogram( fill = "dodgerblue4", bins = 25) +
+  facet_wrap(~key, scales = "free") +
+  theme_bw() +
+  scale_x_continuous(labels = comma) +
+  labs(x = "Value", y = "Count")
+```
+\pagebreak
+
+## Model
+
+I have started my analysis by visually inspecting the relationship between my explanatory variables and the violent crimes per 10,000 people. 
+
+The pattern of association between unemployment and violent crime per 10,000 seems to offer some insight with a positive slope and perhaps with a nonlinear association. I don't see a significant change in unemployment between 1999 and 2000 and neither the difference nor the lagged effects seem to offer extra information. 
+
+The results for the relationship between income per capita and violent crimes per 10,000 are not very promising though. There doesn't seem to be an apparent relationship between states' per capita incomes and violent crime rates. Similar to unemployment, YoY change is nor very significant for income as well, and the pattern of association seems to be unaffected by it. The data variation doesn't seem to be very high as well, and since both variables are per capita, I haven't considered log transformation.
+
+The variation in executions, on the other hand, is very low. Most of the observations are 0. Even though it is allowed in our OLS framework, it is not very ideal for our purposes. That is why I started considering a dummy variable instead of adding the executions data directly into the model. The scatterplot of executions per violent crimes seems to offer more insight, but there is an evident endogeneity problem here. The dependent and independent variables are affecting each other as we can see, states resorting to execution suffer more from violent crimes. Most of the states that have relatively low violent crime rates have 0 execution rate. The exception seems to be Virginia, and perhaps coincidentally, it has the highest execution rate per violent crimes in 99 and second highest in 2000. Perhaps after a certain threshold (after killing many convicts), capital punishment becomes a deterrent, but this is just a wild guess, and we cannot come to such a conclusion by looking at a single datapoint.
+
+When we take a look at the relationship between violent crimes and poverty, on the other hand, we see that impoverished communities seem to suffer from violent crimes more. Perhaps there is a subtle endogeneity here as well. Perhaps high and persistent crime rates hinder these communities from having a long term economic growth or perhaps inequitable distribution of wealth results with unpeaceful communities. It is very hard to draw a causal relationship here. Technically, log transformation seems to benefit us greatly here by creating a linear pattern of association between our variables. Similar to income and unemployment measures, poverty between 1999 and 2000 doesn't seem to change dramatically, thus rendering a lagged or difference variable useless for us.
+
+Finally, we can also see that urbanization and violent crime rates tend to have a strong positive relationship. There might be a sociological reason behind this, but as we will later see, urbanization rates seem to be highly correlated with other variables, particularly with poverty. This could be the reason for this positive association.
+
+```{r, out.width = '33%'}
+# 1) Violent Crime Per 10,000 People - Unemployment in 2000
+ggplot( df_merged , aes(y = vcrime_per_capita00, x = Unemployment00)) +
+  geom_point(color = "dodgerblue4") +
+  geom_smooth(method="loess", se = FALSE, color = "dark red")+
+  theme_bw() +
+  labs(x = "Unemployment `00",y = "Violent Crime Per 10,000 People `00", title = "Unemployment") 
+
+# 2) Violent Crime Per 10,000 People - Income per capita
+ggplot( df_merged , aes(y = vcrime_per_capita00, x = Income_per_capita00)) +
+  geom_point(color = "dodgerblue4") +
+  geom_smooth(method="loess", se = FALSE, color = "dark red")+
+  theme_bw() +
+  labs(x = "Income `00",y = "Violent Crime Per 10,000 People `00", title = "Income Per Capita") 
+
+# 3) Violent Crime Per 10,000 People - Executions per 10,000 violent crime
+ggplot( df_merged , aes(y = vcrime_per_capita00, x = executions_per_vcrime00 )) +
+  geom_point(color = "dodgerblue4") +
+  geom_smooth(method="lm", se = FALSE, color = "dark red")+
+  theme_bw() +
+  labs(x = "Executions per 10,000 V. Crime `00",y = "Violent Crime Per 10,000 People `00", title = "Executions Per 10,000 Violent Crime") 
+```
+
+\begin{center}
+```{r, out.width = '33%'}
+# 4) Violent Crime Per 10,000 People - log of People living in Poverty
+ggplot( df_merged , aes(y = vcrime_per_capita00, x = log(Poverty00))) +
+  geom_point(color = "dodgerblue4") +
+  geom_smooth(method="loess", se = FALSE, color = "dark red")+
+  theme_bw() +
+  labs(x = " log of Poverty `00",y = "Violent Crime Per 10,000 People `00", title = "Log(People in Poverty)") 
+
+# 5) Violent Crime Per 10,000 People - People living in Urban Areas
+ggplot( df_merged , aes(y = vcrime_per_capita00, x = Urbanization00)) +
+  geom_point(color= "dodgerblue4") +
+  geom_smooth(method="loess", se = FALSE, color = "dark red")+
+  theme_bw() +
+  labs(x = "Urbanization `00",y = "Violent Crime Per 10,000 People `00", title = "Urbanization Rate") 
+
+
+```
+
+\end{center}
+
+After visually inspecting the relationship of variables with per capita violent crime using various scatterplots and also comparing models with various explanatory variables, I decided to build a model as can be seen below.
+
+\begin{center}
+$(V. Crimes^*)^E = \beta_0 + \beta_1 Unemployment + \beta_2 log(Poverty) + \beta_3 Urbanization + \beta_4 (Executions^*) + \beta_5 (Execution Dummy) + \beta_6 log(Poverty)*(Execution Dummy)$
+\end{center}
+
+The dependent variable shows violent crimes per 10,000 people as before, and dependent variables show in the same order; unemployment levels in percentages, log transformation of millions of people living in poverty, urbanization rates in percentages, executions per 10,000 violent crimes, a dummy variable being 1 if the state has resorted to capital punishment in 2000 and an interactive term of our poverty measure and execution dummy.
+
+I have built my model by first regressing violent crimes on unemployment levels. That model's statistical significance vastly improved by adding the squared unemployment variable next to the single unemployment variable. However, that also caused the individual significance of the variables to drop, presumably due to multicollinearity. Perhaps the association between variables follows a concave pattern, but I cannot confidently assume such a functional form due to the estimators' very low individual significances. I didn't add the squared variable in the following models.
+
+I continued by adding income per capita to my analysis. However, it turned out that income is individually not statistically significant, and adding it doesn't contribute very much to the model's overall significance too. I already suspected this from the visual inspection of income per capita vis-a-vis violent crimes per 10,000 people. Since the United States have a relatively similar income distribution between states and since unemployment and poverty better reflect the distribution of income within states and communities, I decided to leave income out and added poverty to the analysis.
+
+Not surprisingly, adding the log of people living in poverty to the model, significantly increased its F statistic and adjusted R-squared measures. After this point, I decided to include urbanization into my model as well and again saw a notable increase in the model's goodness of fit, or namely adjusted R-Squared. However, the coefficient of urbanization was not statistically significant by itself, not even in the 10% significance level. Since I am not very interested in urbanization rates' and violent crimes' pattern of association, I decided to keep the variable since it improved the model's overall significance.
+
+The steps above have resulted in a good enough model in my humble opinion. The adjusted R-squared was 0.31, and the estimates of coefficients of unemployment's and poverty's relation with violent crimes per 10,000 people were statistically significant. According to the model, among two observations and one of them with one percent more unemployment than the other, it was expected to see 6 more violent crimes per 10,000 people, taking other variables as constant. Similarly, among two observations with one of them having one percent more impoverished people, it was expected to see 0.06 more violent crime per 10,000 people, which is roughly 6 more violent crimes per 1,000,000 people. So far, we haven't included the execution statistics into our model yet. Still, so far, it is intuitive, and the results can be seen below along with the results of the more comprehensive model. 
+
+\pagebreak
+
+As I have added the executions into the model, I saw that executions itself were not a significant variable. However, the harshness of laws, i.e. execution rate per violent crime seems to increase the fit of our model. Later on, as I have added the execution dummy variable into the equation, I saw that the standard error of the poverty measure's coefficient had increased considerably. It was a sign of multicollinearity, and it seemed to me that states that use capital punishment also suffer from high poverty rates, and high violent crime rates as well and once again the endogeneity problem showed itself. So I have also added the interactive variable with dummy variable times the poverty measure to control for this perceived multicollinearity. 
+
+The resulted model has a 0.54 adjusted R-squared. Apart from the coefficient of executions per 10,000 violent crimes, the model estimates are all individually significant, most of them on a 1% significance level as well. According to this model, among two variables with a percent higher unemployment rate, it was expected to see 5.64 more violent crimes per 10,00 people. Additionally, a percent more poverty observation among states that don't use capital punishment was expected to correspond to 5.61 more violent crimes per 1,000,000 people in those states. Similarly, a percent more poverty observation among states that resorts to capital punishment were expected to correspond to 4.73 less violent crimes per 1,000,000 people. Now, the coefficient of urbanization measure also seems to be statistically significant, and among different observations, a percent higher urbanization rate is expected to correspond to 37 more violent crimes per 1,000,000 people. And not surprisingly, executions per violent crimes don't seem to be statistically significant than 0 in the relationship between violent crimes per capita. The effect we see through poverty is minuscule and counter-intuitive as well. However I should also note that the variables that I've included, later on, namely the variables that include some version of executions are altogether statistically significant, we can see that by implementing the F-test, $\frac{(R^2_{ur} - R^2_r)/q}{(1-R^2_{ur})/n-k-1 }$.
+
+
+```{r, results = "asis"}
+# We will add the log poverty to our model.
+df_merged <- df_merged %>% mutate(Poverty00_ln = log(Poverty00)) 
+# We now add Executions as a qualitative variable to control for the use of capital punishment. 
+df_merged <- df_merged %>% mutate(Execution_dummy00 = ifelse(Executions00 >0, 1, 0))
+# We also add an interactive dummy to control for the multicollineairty between
+# execution dummy and Poverty rates.
+
+reg5 <- lm_robust( vcrime_per_capita00 ~ Unemployment00 + Poverty00_ln + Urbanization00,
+                   data = df_merged, se_type = "HC2")
+
+reg8 <- lm_robust( vcrime_per_capita00 ~ Unemployment00 + Poverty00_ln + Urbanization00 + 
+                     executions_per_vcrime00 + Execution_dummy00 + Poverty00_ln*Execution_dummy00,
+                   data = df_merged, se_type = "HC2")
+
+texreg( list(reg5, reg8), 
+        type = "latex",
+        custom.coef.names = c("Intercept","Unemployment","log(Poverty)",
+                              "Urbanization","Executions*", "(Execution Dummy)", 
+                              "(Execution Dummy) * log(Poverty) "),
+        caption = 'Violent Crimes per 10,000 People on Multiple Explanatory Variable',
+        include.ci = FALSE, include.rmse = FALSE,include.adjrs = TRUE,
+        fontsize = 'small' )
+
+
+
+```
+
+## Robustness Analysis
+Having said the above, I also want to check if the model results from this specific sample, i.e. the particular year 2000. I already checked most of the variables' status in 1999 and also checked their relationship with the dependent variable in 2000, and I have already seen that there are not many variations between the two years. Now, I would also like to build my model using the 1999 data and see if the results would be similar.
+
+The results of the said model can be seen below. The estimates are rather similar to our original model's estimates, suggesting that the results are not very sensitive to our sample.
+
+```{r, results = "asis"}
+# Ninth model:
+# We now check the same model with data from 1999.
+df_merged <- df_merged %>% mutate(Execution_dummy99 = ifelse(Executions99 >0, 1, 0))
+df_merged <- df_merged %>% mutate(Poverty99_ln = log(Poverty99)) 
+
+reg9 <- lm_robust( vcrime_per_capita99 ~ Unemployment99 + Poverty99_ln + Urbanization00 + 
+                     executions_per_vcrime99 + Execution_dummy99 + Poverty99_ln*Execution_dummy99,
+                   data = df_merged, se_type = "HC2")
+
+texreg( list(reg9),
+        type = "latex",
+        custom.coef.names = c("Intercept `99","Unemployment `99","log(Poverty) `99",
+                              "Urbanization `00","Executions* `99", "(Execution Dummy) `99", 
+                              "(Execution Dummy) * log(Poverty) `99"),
+        caption = 'Violent Crimes per 10,000 People on Multiple Explanatory Variable `99',
+        include.ci = FALSE, include.rmse = FALSE,include.adjrs = TRUE,
+        fontsize = 'small' )
+
+```
+
+\pagebreak
+
+## Causality and External Validity
+So far, using some macroeconomic variables, I was able to form a model with a relatively high goodness of fit measure for such a project. Still, as mentioned above, there seems to be a significant problem regarding causality, which is the endogeneity problem. The factors affecting our dependent variable in return also affects our independent variable through the dependent variable. That is to say, the legality of capital punishment is partly determined the violent crime rates in a given state and also the legality of capital punishment affects the criminal behaviour to a certain degree and changes the number of violent crimes in the same state. The same, it could be argued, goes for poverty as well. 
+
+It is very hard to derive causal interpretations of the factors affecting criminal behaviour within such a context, and further research is definitely necessary. What we have accomplished here though is to show a useful pattern of behaviour between variables. 
+
+However, we can argue that this basic analysis has some external validity. As pointed before, the interstate statistics offers a good similarity of western post-industrial societies. Of course, societies differ culturally, politically and historically, but the variations between the United States can still be argued to offer some degree of external validity for our purposes.
+
+## Summary
+I have tried to analyze the relationship between violent crime rates and capital punishment. I have built a regression equation where violent crimes per 10,000 people are the dependent variable whereas unemployment rate, the log of people in poverty, urbanization rates, executions per violent crimes and a dummy, as well as a dummy interaction term with a log of people in poverty, is used as the independent variables. Using this linear model, It seems that executing people isn't really expected to decrease violent crime. In fact, changes in demographic and economic factors are associated with more significant changes in violent crime rates. 
+
+I have also pointed out the limitations of this basic study, particularly the problem of endogeneity/simultaneity. This problem itself hinders us from the causal analysis. Additionally, possible unobservable confounders such as psychological or sociological factors should negatively affect our confidence in the model. This also shows our model's weakness regarding external validity, but even under these conditions, the geographical nature of the data offers some solace in that regard.
